@@ -372,7 +372,6 @@ app.post('/api/sessions', async (req, res) => {
     // Create QR data URL - use environment variable for deployed URL or local IP
     const baseUrl = process.env.RENDER_EXTERNAL_URL || 
                     process.env.RAILWAY_STATIC_URL || 
-                    process.env.HEROKU_APP_NAME ? `https://${process.env.HEROKU_APP_NAME}.herokuapp.com` :
                     `http://${LOCAL_IP}:${PORT}`;
     const qrData = `${baseUrl}/scan/${sessionId}`;
     
@@ -423,7 +422,6 @@ app.get('/api/sessions/active', async (req, res) => {
     // Generate fresh QR code
     const baseUrl = process.env.RENDER_EXTERNAL_URL || 
                     process.env.RAILWAY_STATIC_URL || 
-                    process.env.HEROKU_APP_NAME ? `https://${process.env.HEROKU_APP_NAME}.herokuapp.com` :
                     `http://${LOCAL_IP}:${PORT}`;
     const qrData = `${baseUrl}/scan/${session.id}`;
     const qrCodeImage = await QRCode.toDataURL(qrData);
