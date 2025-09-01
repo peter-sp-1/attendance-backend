@@ -896,6 +896,10 @@ app.get('/scan/:sessionId', async (req, res) => {
       </body>
       </html>
     `);
+  } catch (error) {
+    console.error('Error serving attendance page:', error);
+    res.status(500).send('Internal Server Error');
+  }
 });
 
 // Mark attendance
