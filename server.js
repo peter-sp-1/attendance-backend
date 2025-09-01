@@ -62,7 +62,15 @@ function getLocalIPAddress() {
 const LOCAL_IP = getLocalIPAddress();
 
 // Middleware
-app.use(cors());
+app.use(cors({
+  origin: [
+    process.env.RENDER_EXTERNAL_URL,
+    `http://${LOCAL_IP}:${PORT}`,
+    'http://localhost:5000'
+  ],
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  credentials: true
+}));
 app.use(express.json());
 
 // Initialize database collections and indexes
@@ -699,7 +707,8 @@ app.get('/scan/:sessionId', async (req, res) => {
         </div>
 
         <script>
-          const sessionId = '\${sessionId}';
+          const API_BASE_URL = '${process.env.RENDER_EXTERNAL_URL || `http://${LOCAL_IP}:${PORT}`}';
+          const sessionId = '${sessionId}';
           let members = [];
           let markedMembers = new Set();
 
@@ -707,12 +716,13 @@ app.get('/scan/:sessionId', async (req, res) => {
 
           async function loadMembers() {
             try {
-              const response = await fetch('/api/members');
+              const response = await fetch(\`\${API_BASE_URL}/api/members\`);
               if (!response.ok) throw new Error('Failed to fetch');
               
               members = await response.json();
               displayMembers(members);
             } catch (error) {
+              console.error('Load members error:', error);
               document.getElementById('membersList').innerHTML = 
                 '<div class="error">Failed to load members. Please refresh the page.</div>';
             }
@@ -760,9 +770,12 @@ app.get('/scan/:sessionId', async (req, res) => {
             buttonElement.textContent = '⏳ Marking...';
             
             try {
-              const response = await fetch('/api/attendance', {
+              const response = await fetch(\`\${API_BASE_URL}/api/attendance\`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                  'Content-Type': 'application/json',
+                  'Accept': 'application/json'
+                },
                 body: JSON.stringify({ sessionId, memberId })
               });
               
@@ -778,6 +791,7 @@ app.get('/scan/:sessionId', async (req, res) => {
                 showMessage(result.error || 'Failed to mark attendance', 'error');
               }
             } catch (error) {
+              console.error('Mark attendance error:', error);
               buttonElement.disabled = false;
               buttonElement.textContent = '📝 Mark Present';
               showMessage('Network error - please try again', 'error');
@@ -799,18 +813,24 @@ app.get('/scan/:sessionId', async (req, res) => {
             };
 
             try {
-              const memberResponse = await fetch('/api/members', {
+              const memberResponse = await fetch(\`\${API_BASE_URL}/api/members\`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                  'Content-Type': 'application/json',
+                  'Accept': 'application/json'
+                },
                 body: JSON.stringify(newMember)
               });
 
               const memberResult = await memberResponse.json();
 
               if (memberResponse.ok) {
-                const attendanceResponse = await fetch('/api/attendance', {
+                const attendanceResponse = await fetch(\`\${API_BASE_URL}/api/attendance\`, {
                   method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
+                  headers: { 
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json'
+                  },
                   body: JSON.stringify({ sessionId, memberId: memberResult.id })
                 });
                 
@@ -827,6 +847,7 @@ app.get('/scan/:sessionId', async (req, res) => {
                 showMessage(memberResult.error || 'Failed to register new member', 'error');
               }
             } catch (error) {
+              console.error('Add member error:', error);
               showMessage('Network error - please try again', 'error');
             } finally {
               submitBtn.disabled = false;
@@ -835,21 +856,25 @@ app.get('/scan/:sessionId', async (req, res) => {
           }
 
           function switchTab(tab) {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
-            
-            const tabText = tab === 'new' ? 'First Timer' : 'Existing Member';
-            const tabElements = document.querySelectorAll('.tab');
-            let selectedTab = null;
-            tabElements.forEach(t => {
-              if (t.textContent.trim() === tabText) {
-                selectedTab = t;
-              }
-            });
-            const selectedContent = document.getElementById(tab + '-member');
-            
-            if (selectedTab) selectedTab.classList.add('active');
-            if (selectedContent) selectedContent.classList.add('active');
+            try {
+              document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+              document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+              
+              const tabText = tab === 'new' ? 'First Timer' : 'Existing Member';
+              const tabElements = document.querySelectorAll('.tab');
+              let selectedTab = null;
+              tabElements.forEach(t => {
+                if (t.textContent.trim() === tabText) {
+                  selectedTab = t;
+                }
+              });
+              const selectedContent = document.getElementById(tab + '-member');
+              
+              if (selectedTab) selectedTab.classList.add('active');
+              if (selectedContent) selectedContent.classList.add('active');
+            } catch (error) {
+              console.error('Switch tab error:', error);
+            }
           }
 
           function showMessage(text, type) {
@@ -862,14 +887,15 @@ app.get('/scan/:sessionId', async (req, res) => {
               msgDiv.style.display = 'none';
             }, 5000);
           }
+
+          // Initialize the page
+          document.addEventListener('DOMContentLoaded', () => {
+            loadMembers().catch(console.error);
+          });
         </script>
       </body>
       </html>
     `);
-  } catch (error) {
-    console.error('Error in scan route:', error);
-    res.status(500).send('Internal server error');
-  }
 });
 
 // Mark attendance
