@@ -64,14 +64,20 @@ const LOCAL_IP = getLocalIPAddress();
 // Middleware
 app.use(cors({
   origin: [
-    process.env.RENDER_EXTERNAL_URL,
-    `http://${LOCAL_IP}:${PORT}`,
-    'http://localhost:5000'
+    'https://nifes-attendance-h2ax.vercel.app',   // Add your Vercel frontend URL
+    'https://nifes-attendance.onrender.com',       // Your Render backend URL
+    `http://${LOCAL_IP}:${PORT}`,                 // Local development
+    'http://localhost:5000'                       // Local development
   ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
-  credentials: true
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],  // Add OPTIONS method
+  credentials: true,
+  allowedHeaders: ['Content-Type', 'Accept', 'Authorization'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range']
 }));
 app.use(express.json());
+
+// Add preflight OPTIONS handler
+app.options('*', cors());
 
 // Initialize database collections and indexes
 async function initializeDatabase() {
@@ -886,6 +892,29 @@ app.get('/scan/:sessionId', async (req, res) => {
             setTimeout(() => {
               msgDiv.style.display = 'none';
             }, 5000);
+          }
+
+          async function loadCurrentAttendance() {
+            try {
+              const response = await fetch(\`${API_BASE_URL}/api/attendance/current\`, {
+                method: 'GET',
+                headers: {
+                  'Accept': 'application/json',
+                  'Content-Type': 'application/json'
+                },
+                credentials: 'include'  // Include credentials if needed
+              });
+
+              if (!response.ok) {
+                throw new Error('HTTP error! status: ' + response.status);
+              }
+              
+              const data = await response.json();
+              return data;
+            } catch (error) {
+              console.error('Failed to load current attendance:', error);
+              throw error;
+            }
           }
 
           // Initialize the page
