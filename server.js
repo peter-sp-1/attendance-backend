@@ -2,14 +2,24 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const QRCode = require("qrcode");
+const { v4: uuidv4 } = require("uuid");
 
 const app = express();
-app.use(cors());
+app.use(
+  cors({
+    origin: ["http://127.0.0.1:3000", "https://nifes-attendance-h2ax.vercel.app"],
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    credentials: true,
+  })
+);
 app.use(express.json());
 
 // --- MongoDB Connection ---
-const MONGO_URI = process.env.MONGODB_URI || "mongodb+srv://<user>:<pass>@cluster.mongodb.net/fellowship";
-mongoose.connect(MONGO_URI)
+const MONGO_URI =
+  process.env.MONGODB_URI ||
+  "mongodb+srv://<user>:<pass>@cluster.mongodb.net/fellowship";
+mongoose
+  .connect(MONGO_URI)
   .then(() => console.log("✅ Connected to MongoDB"))
   .catch((err) => console.error("MongoDB connection error:", err));
 
@@ -17,18 +27,21 @@ mongoose.connect(MONGO_URI)
 const MemberSchema = new mongoose.Schema({
   id: String,
   name: String,
+  phone: String,
 });
 
 const SessionSchema = new mongoose.Schema({
   id: String,
+  name: String,
   active: Boolean,
+  createdAt: { type: Date, default: Date.now },
 });
 
 const AttendanceSchema = new mongoose.Schema({
   sessionId: String,
   memberId: String,
   memberName: String,
-  timestamp: Number,
+  timestamp: { type: Date, default: Date.now },
 });
 
 const Member = mongoose.model("Member", MemberSchema);
@@ -42,7 +55,7 @@ app.get("/api/members", async (req, res) => {
 });
 
 app.post("/api/members", async (req, res) => {
-  const member = new Member({ id: uuidv4(), name: req.body.name });
+  const member = new Member({ id: uuidv4(), name: req.body.name, phone: req.body.phone });
   await member.save();
   res.json(member);
 });
@@ -54,31 +67,35 @@ app.delete("/api/members/:id", async (req, res) => {
 
 // --- Sessions ---
 app.post("/api/sessions", async (req, res) => {
+  const { name } = req.body;
   const id = uuidv4();
 
-  // deactivate all old sessions
+  // Deactivate all old sessions
   await Session.updateMany({}, { active: false });
 
-  const session = new Session({ id, active: true });
+  const session = new Session({ id, name, active: true });
   await session.save();
 
   const url = `https://nifes-attendance.onrender.com/scan/${id}`;
   const qr = await QRCode.toDataURL(url);
+
   res.json({ id, qr });
 });
 
 app.get("/api/sessions/active", async (req, res) => {
   const session = await Session.findOne({ active: true });
   if (!session) return res.status(404).json({ error: "No active session" });
+
   const url = `https://nifes-attendance.onrender.com/scan/${session.id}`;
   const qr = await QRCode.toDataURL(url);
-  res.json({ id: session.id, qr });
+  res.json({ id: session.id, name: session.name, qr });
 });
 
 // --- Scan Page ---
 app.get("/scan/:id", async (req, res) => {
   const session = await Session.findOne({ id: req.params.id, active: true });
   if (!session) return res.send("Invalid or expired session");
+
   res.send(`
     <html>
       <body style="font-family: sans-serif; text-align: center; padding: 2rem;">
@@ -117,7 +134,6 @@ app.post("/api/attendance", async (req, res) => {
     sessionId,
     memberId: member.id,
     memberName: member.name,
-    timestamp: Date.now(),
   });
   await record.save();
 
@@ -134,7 +150,6 @@ app.post("/api/attendance/manual", async (req, res) => {
     sessionId: session.id,
     memberId: member.id,
     memberName: member.name,
-    timestamp: Date.now(),
   });
   await record.save();
 
@@ -143,11 +158,12 @@ app.post("/api/attendance/manual", async (req, res) => {
 
 app.get("/api/attendance/report", async (req, res) => {
   const session = await Session.findOne({ active: true });
-  if (!session) return res.json([]);
+  if (!session) return res.json({ error: "No active session" });
+
   const records = await Attendance.find({ sessionId: session.id });
-  res.json(records);
+  res.json({ session, report: records });
 });
 
 // --- Start Server ---
 const port = process.env.PORT || 5000;
-app.listen(port, () => console.log("Backend running on port " + port));
+app.listen(port, () => console.log("🚀 Backend running on port " + port));
