@@ -1,8 +1,7 @@
-import express from "express";
-import cors from "cors";
-import mongoose from "mongoose";
-import { v4 as uuidv4 } from "uuid";
-import QRCode from "qrcode";
+const express = require("express");
+const mongoose = require("mongoose");
+const cors = require("cors");
+const QRCode = require("qrcode");
 
 const app = express();
 app.use(cors());
@@ -63,7 +62,7 @@ app.post("/api/sessions", async (req, res) => {
   const session = new Session({ id, active: true });
   await session.save();
 
-  const url = `https://your-backend.onrender.com/scan/${id}`;
+  const url = `https://nifes-attendance.onrender.com/scan/${id}`;
   const qr = await QRCode.toDataURL(url);
   res.json({ id, qr });
 });
@@ -71,7 +70,7 @@ app.post("/api/sessions", async (req, res) => {
 app.get("/api/sessions/active", async (req, res) => {
   const session = await Session.findOne({ active: true });
   if (!session) return res.status(404).json({ error: "No active session" });
-  const url = `https://your-backend.onrender.com/scan/${session.id}`;
+  const url = `https://nifes-attendance.onrender.com/scan/${session.id}`;
   const qr = await QRCode.toDataURL(url);
   res.json({ id: session.id, qr });
 });
