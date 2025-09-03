@@ -29,10 +29,10 @@
     "nodejs",
     "mongodb"
   ],
-  "author": "Your Name",
+  "author": "Peter Sp",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "your-repo-url"
+    "url": "https://github.com/peter-sp-1/fellowship-attendance.git"
   }
 }
