@@ -143,15 +143,34 @@ async function getMembers() {
 async function addMember(memberData) {
   const database = await connectToDatabase();
   if (database && !fallbackStorage.usingFallback) {
-    const existing = await database.collection('members').findOne({ email: memberData.email });
-    if (existing) throw { code: 11000 };
-    
-    await database.collection('members').insertOne(memberData);
-    return memberData;
+    try {
+      // Check if email already exists
+      const existing = await database.collection('members').findOne({ email: memberData.email });
+      if (existing) {
+        const error = new Error('Email already exists');
+        error.code = 11000;
+        error.keyPattern = { email: 1 };
+        throw error;
+      }
+      
+      await database.collection('members').insertOne(memberData);
+      return memberData;
+    } catch (error) {
+      // Handle MongoDB duplicate key errors
+      if (error.code === 11000 || (error.keyPattern && error.keyPattern.email)) {
+        const duplicateError = new Error('Email already exists');
+        duplicateError.code = 11000;
+        throw duplicateError;
+      }
+      throw error;
+    }
   } else {
+    // Check for duplicate email in fallback storage
     for (let member of fallbackStorage.members.values()) {
-      if (member.email === memberData.email) {
-        throw { code: 11000 };
+      if (member.email.toLowerCase() === memberData.email.toLowerCase()) {
+        const error = new Error('Email already exists');
+        error.code = 11000;
+        throw error;
       }
     }
     fallbackStorage.members.set(memberData.id, memberData);

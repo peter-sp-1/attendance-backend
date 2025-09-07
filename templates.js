@@ -1045,10 +1045,21 @@ function getScanPageHTML(session) {
           
           const newMember = {
             name: document.getElementById('newName').value.trim(),
-            email: document.getElementById('newEmail').value.trim(),
+            email: document.getElementById('newEmail').value.trim().toLowerCase(),
             phone: document.getElementById('newPhone').value.trim(),
             address: document.getElementById('newAddress').value.trim()
           };
+
+          // Basic email validation on frontend
+          const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+          if (!emailRegex.test(newMember.email)) {
+            showMessage('Please enter a valid email address', 'error');
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Add & Mark Present';
+            return;
+          }
+
+          console.log('Attempting to add new member:', newMember);
 
           try {
             const memberResponse = await fetch(API_BASE_URL + '/api/members', {
@@ -1061,8 +1072,10 @@ function getScanPageHTML(session) {
             });
 
             const memberResult = await memberResponse.json();
+            console.log('Member response:', memberResponse.status, memberResult);
 
             if (memberResponse.ok) {
+              console.log('Member added successfully, now marking attendance');
               const attendanceResponse = await fetch(API_BASE_URL + '/api/attendance', {
                 method: 'POST',
                 headers: { 
@@ -1073,6 +1086,7 @@ function getScanPageHTML(session) {
               });
               
               const attendanceResult = await attendanceResponse.json();
+              console.log('Attendance response:', attendanceResponse.status, attendanceResult);
               
               if (attendanceResponse.ok) {
                 showMessage('Welcome! You have been registered and marked present.', 'success');
@@ -1082,6 +1096,7 @@ function getScanPageHTML(session) {
                 showMessage(attendanceResult.error || 'Member added but failed to mark attendance', 'error');
               }
             } else {
+              console.error('Failed to add member:', memberResult);
               showMessage(memberResult.error || 'Failed to register new member', 'error');
             }
           } catch (error) {
