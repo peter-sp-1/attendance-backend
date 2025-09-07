@@ -15,6 +15,7 @@ const {
   updateMemberFirstScan,
   addAttendanceRecord,
   connectToDatabase,
+  checkEmailExists,
   fallbackStorage
 } = require('./database');
 
@@ -44,7 +45,8 @@ router.get('/health', (req, res) => {
     status: 'OK',
     timestamp: new Date().toISOString(),
     database: fallbackStorage.usingFallback ? 'fallback' : 'mongodb',
-    mongodb_uri: process.env.MONGODB_URI ? 'configured' : 'not configured'
+    mongodb_uri: process.env.MONGODB_URI ? 'configured' : 'not configured',
+    environment: process.env.NODE_ENV || 'development'
   });
 });
 
@@ -59,38 +61,89 @@ router.get('/api/members', async (req, res) => {
   }
 });
 
+// Check if email exists
+router.post('/api/check-email', async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: 'Email is required' });
+    }
+    
+    const exists = await checkEmailExists(email);
+    res.json({ exists, email: email.trim().toLowerCase() });
+  } catch (error) {
+    console.error('Error checking email:', error);
+    res.status(500).json({ error: 'Failed to check email' });
+  }
+});
+
 // Add new member
 router.post('/api/members', async (req, res) => {
-  const { name, email, phone, address } = req.body;
-  
-  if (!name || !email) {
-    return res.status(400).json({ error: 'Name and email are required' });
-  }
-  
-  const id = uuidv4();
-  
   try {
+    const { name, email, phone, address } = req.body;
+    
+    // Input validation
+    if (!name || !email) {
+      return res.status(400).json({ error: 'Name and email are required' });
+    }
+    
+    // Clean and normalize input
+    const cleanName = name.trim();
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPhone = phone ? phone.trim() : '';
+    const cleanAddress = address ? address.trim() : '';
+    
+    // Validate email format
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(cleanEmail)) {
+      return res.status(400).json({ error: 'Please enter a valid email address' });
+    }
+    
+    console.log(`API: Adding member "${cleanName}" with email "${cleanEmail}"`);
+    
+    // Check if email already exists
+    const emailExists = await checkEmailExists(cleanEmail);
+    if (emailExists) {
+      console.log(`API: Email ${cleanEmail} already exists`);
+      return res.status(409).json({ 
+        error: `A member with email "${cleanEmail}" already exists. Please use a different email address.`,
+        code: 'EMAIL_EXISTS'
+      });
+    }
+    
+    // Create new member object
     const newMember = {
-      id,
-      name: name.trim(),
-      email: email.trim().toLowerCase(),
-      phone: phone ? phone.trim() : '',
-      address: address ? address.trim() : '',
+      id: uuidv4(),
+      name: cleanName,
+      email: cleanEmail,
+      phone: cleanPhone,
+      address: cleanAddress,
       created_at: new Date()
     };
     
-    await addMember(newMember);
-    res.json({
-      ...newMember,
+    // Add member to database
+    const result = await addMember(newMember);
+    console.log(`API: Successfully added member: ${result.name}`);
+    
+    res.status(201).json({
+      ...result,
       message: 'Member added successfully'
     });
-  } catch (err) {
-    console.error('Error adding member:', err);
-    if (err.code === 11000) {
-      res.status(400).json({ error: 'Email already exists' });
-    } else {
-      res.status(500).json({ error: 'Failed to add member' });
+    
+  } catch (error) {
+    console.error('Error adding member:', error);
+    
+    if (error.message.includes('already exists') || error.code === 11000) {
+      return res.status(409).json({ 
+        error: 'A member with this email address already exists. Please use a different email address.',
+        code: 'EMAIL_EXISTS'
+      });
     }
+    
+    res.status(500).json({ 
+      error: 'Failed to add member. Please try again.',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
   }
 });
 
@@ -124,9 +177,8 @@ router.post('/api/sessions', async (req, res) => {
   const sessionDate = new Date().toISOString().split('T')[0];
   
   try {
-    const baseUrl = process.env.RENDER_EXTERNAL_URL || 
-                    process.env.RAILWAY_STATIC_URL || 
-                    `http://${LOCAL_IP}:${PORT}`;
+    // Use Render's external URL if available, otherwise fallback
+    const baseUrl = process.env.RENDER_EXTERNAL_URL || `https://${req.get('host')}` || `http://${LOCAL_IP}:${PORT}`;
     const qrData = `${baseUrl}/scan/${sessionId}`;
     
     const qrCodeDataURL = await QRCode.toDataURL(qrData, {
@@ -172,9 +224,7 @@ router.get('/api/sessions/active', async (req, res) => {
       return res.status(404).json({ error: 'No active session found' });
     }
     
-    const baseUrl = process.env.RENDER_EXTERNAL_URL || 
-                    process.env.RAILWAY_STATIC_URL || 
-                    `http://${LOCAL_IP}:${PORT}`;
+    const baseUrl = process.env.RENDER_EXTERNAL_URL || `https://${req.get('host')}` || `http://${LOCAL_IP}:${PORT}`;
     const qrData = `${baseUrl}/scan/${session.id}`;
     const qrCodeImage = await QRCode.toDataURL(qrData);
     
@@ -277,7 +327,8 @@ router.get('/api/attendance/current', async (req, res) => {
             scan_time: '$scan_time',
             is_first_time: '$is_first_time',
             marked_manually: '$marked_manually'
-          }}
+          }},
+          { $sort: { scan_time: -1 } }
         ]).toArray();
 
       res.json(attendance);
@@ -303,6 +354,8 @@ router.get('/api/attendance/current', async (req, res) => {
           }
         }
       }
+      // Sort by scan time descending
+      attendance.sort((a, b) => new Date(b.scan_time) - new Date(a.scan_time));
       res.json(attendance);
     }
   } catch (error) {

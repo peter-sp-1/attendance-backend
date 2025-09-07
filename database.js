@@ -1,5 +1,4 @@
 const { MongoClient } = require('mongodb');
-const { v4: uuidv4 } = require('uuid');
 
 // Database connection
 let db;
@@ -43,21 +42,26 @@ async function initializeDatabase() {
     const database = await connectToDatabase();
     
     if (database) {
-      console.log('🔧 Initializing database indexes...');
+      console.log('🔧 Initializing database collections and indexes...');
       
       const collections = await database.listCollections().toArray();
       const collectionNames = collections.map(c => c.name);
       
+      // Create collections if they don't exist
       if (!collectionNames.includes('members')) {
         await database.createCollection('members');
+        console.log('Created members collection');
       }
       if (!collectionNames.includes('attendance_sessions')) {
         await database.createCollection('attendance_sessions');
+        console.log('Created attendance_sessions collection');
       }
       if (!collectionNames.includes('attendance_records')) {
         await database.createCollection('attendance_records');
+        console.log('Created attendance_records collection');
       }
       
+      // Create indexes
       try {
         await Promise.all([
           database.collection('members').createIndex({ id: 1 }, { unique: true }),
@@ -71,58 +75,9 @@ async function initializeDatabase() {
         console.log('⚠️ Some indexes may already exist, continuing...');
       }
       
-      // Add demo data if empty
-      const memberCount = await database.collection('members').countDocuments();
-      if (memberCount === 0) {
-        console.log('📝 Adding demo data...');
-        const demoMembers = [
-          { 
-            id: uuidv4(), 
-            name: 'John Doe', 
-            email: 'john.doe@example.com', 
-            phone: '123-456-7890',
-            address: '123 Main St',
-            created_at: new Date()
-          },
-          { 
-            id: uuidv4(), 
-            name: 'Jane Smith', 
-            email: 'jane.smith@example.com', 
-            phone: '098-765-4321',
-            address: '456 Oak Ave',
-            created_at: new Date()
-          }
-        ];
-        
-        await database.collection('members').insertMany(demoMembers);
-        console.log(`✅ Added ${demoMembers.length} demo members`);
-      }
+      console.log('✅ Database initialization complete');
     } else {
       console.log('⚠️ Using fallback storage - data will not persist after server restart');
-      // Add demo data to fallback
-      if (fallbackStorage.members.size === 0) {
-        const demoMembers = [
-          { 
-            id: uuidv4(), 
-            name: 'John Doe', 
-            email: 'john.doe@example.com', 
-            phone: '123-456-7890',
-            address: '123 Main St',
-            created_at: new Date()
-          },
-          { 
-            id: uuidv4(), 
-            name: 'Jane Smith', 
-            email: 'jane.smith@example.com', 
-            phone: '098-765-4321',
-            address: '456 Oak Ave',
-            created_at: new Date()
-          }
-        ];
-        demoMembers.forEach(member => {
-          fallbackStorage.members.set(member.id, member);
-        });
-      }
     }
   } catch (error) {
     console.error('❌ Error initializing database:', error.message);
@@ -140,41 +95,64 @@ async function getMembers() {
   }
 }
 
-async function addMember(memberData) {
+async function checkEmailExists(email) {
+  const normalizedEmail = email.trim().toLowerCase();
   const database = await connectToDatabase();
+  
+  if (database && !fallbackStorage.usingFallback) {
+    const existing = await database.collection('members').findOne({ 
+      email: normalizedEmail 
+    });
+    return !!existing;
+  } else {
+    // Check fallback storage
+    for (let member of fallbackStorage.members.values()) {
+      if (member.email.toLowerCase() === normalizedEmail) {
+        return true;
+      }
+    }
+    return false;
+  }
+}
+
+async function addMember(memberData) {
+  const normalizedEmail = memberData.email.trim().toLowerCase();
+  
+  console.log(`Adding member: ${memberData.name} with email: ${normalizedEmail}`);
+  
+  // Check if email already exists
+  const emailExists = await checkEmailExists(normalizedEmail);
+  if (emailExists) {
+    console.log(`Email ${normalizedEmail} already exists`);
+    const error = new Error('A member with this email address already exists');
+    error.code = 11000;
+    throw error;
+  }
+  
+  const database = await connectToDatabase();
+  
+  // Ensure email is normalized in the member data
+  const normalizedMemberData = {
+    ...memberData,
+    email: normalizedEmail
+  };
+  
   if (database && !fallbackStorage.usingFallback) {
     try {
-      // Check if email already exists
-      const existing = await database.collection('members').findOne({ email: memberData.email });
-      if (existing) {
-        const error = new Error('Email already exists');
-        error.code = 11000;
-        error.keyPattern = { email: 1 };
-        throw error;
-      }
-      
-      await database.collection('members').insertOne(memberData);
-      return memberData;
+      await database.collection('members').insertOne(normalizedMemberData);
+      console.log(`Successfully added member: ${normalizedMemberData.name}`);
+      return normalizedMemberData;
     } catch (error) {
-      // Handle MongoDB duplicate key errors
-      if (error.code === 11000 || (error.keyPattern && error.keyPattern.email)) {
-        const duplicateError = new Error('Email already exists');
-        duplicateError.code = 11000;
-        throw duplicateError;
+      console.error('MongoDB insert error:', error);
+      if (error.code === 11000) {
+        throw new Error('A member with this email address already exists');
       }
       throw error;
     }
   } else {
-    // Check for duplicate email in fallback storage
-    for (let member of fallbackStorage.members.values()) {
-      if (member.email.toLowerCase() === memberData.email.toLowerCase()) {
-        const error = new Error('Email already exists');
-        error.code = 11000;
-        throw error;
-      }
-    }
-    fallbackStorage.members.set(memberData.id, memberData);
-    return memberData;
+    fallbackStorage.members.set(normalizedMemberData.id, normalizedMemberData);
+    console.log(`Successfully added member to fallback: ${normalizedMemberData.name}`);
+    return normalizedMemberData;
   }
 }
 
@@ -192,10 +170,13 @@ async function deleteMember(memberId) {
 async function createSession(sessionData) {
   const database = await connectToDatabase();
   if (database && !fallbackStorage.usingFallback) {
+    // Deactivate all existing sessions
     await database.collection('attendance_sessions').updateMany({}, { $set: { is_active: 0 } });
+    // Insert new active session
     await database.collection('attendance_sessions').insertOne(sessionData);
     return sessionData;
   } else {
+    // Deactivate all existing sessions in fallback
     for (let session of fallbackStorage.sessions.values()) {
       session.is_active = 0;
     }
@@ -240,7 +221,10 @@ async function getMember(memberId) {
 async function getAttendanceRecord(sessionId, memberId) {
   const database = await connectToDatabase();
   if (database && !fallbackStorage.usingFallback) {
-    return await database.collection('attendance_records').findOne({ session_id: sessionId, member_id: memberId });
+    return await database.collection('attendance_records').findOne({ 
+      session_id: sessionId, 
+      member_id: memberId 
+    });
   } else {
     const key = `${sessionId}-${memberId}`;
     return fallbackStorage.attendance.get(key) || null;
@@ -263,7 +247,10 @@ async function countMemberAttendance(memberId) {
 async function updateMemberFirstScan(memberId) {
   const database = await connectToDatabase();
   if (database && !fallbackStorage.usingFallback) {
-    await database.collection('members').updateOne({ id: memberId }, { $set: { first_scan_date: new Date() } });
+    await database.collection('members').updateOne(
+      { id: memberId }, 
+      { $set: { first_scan_date: new Date() } }
+    );
   } else {
     const member = fallbackStorage.members.get(memberId);
     if (member && !member.first_scan_date) {
@@ -306,5 +293,6 @@ module.exports = {
   updateMemberFirstScan,
   addAttendanceRecord,
   closeDatabase,
+  checkEmailExists,
   fallbackStorage
 };
