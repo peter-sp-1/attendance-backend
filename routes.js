@@ -486,4 +486,75 @@ router.get('/api/sessions', async (req, res) => {
   }
 });
 
+// Add this route to your routes.js file temporarily to fix the database issue
+// After running once, you can remove this route
+
+router.post('/api/fix-database', async (req, res) => {
+  try {
+    const database = await connectToDatabase();
+    
+    if (!database) {
+      return res.status(500).json({ error: 'Database not connected' });
+    }
+    
+    console.log('Starting database fix...');
+    
+    // 1. Get the members collection
+    const membersCollection = database.collection('members');
+    
+    // 2. List all indexes to see what we're dealing with
+    const indexes = await membersCollection.listIndexes().toArray();
+    console.log('Current indexes:');
+    indexes.forEach(index => {
+      console.log(`- ${index.name}:`, index.key);
+    });
+    
+    // 3. Check if memberCode_1 index exists and drop it
+    const memberCodeIndex = indexes.find(index => index.name === 'memberCode_1');
+    if (memberCodeIndex) {
+      await membersCollection.dropIndex('memberCode_1');
+      console.log('Dropped memberCode_1 index');
+    }
+    
+    // 4. Remove memberCode field from all existing documents
+    const updateResult = await membersCollection.updateMany(
+      {},
+      { $unset: { memberCode: "" } }
+    );
+    console.log(`Removed memberCode field from ${updateResult.modifiedCount} documents`);
+    
+    // 5. Ensure proper indexes exist
+    try {
+      await membersCollection.createIndex({ id: 1 }, { unique: true });
+      console.log('Created/verified id index');
+    } catch (e) {
+      console.log('id index already exists');
+    }
+    
+    try {
+      await membersCollection.createIndex({ email: 1 }, { unique: true });
+      console.log('Created/verified email index');
+    } catch (e) {
+      console.log('email index already exists');
+    }
+    
+    // 6. Show final state
+    const finalIndexes = await membersCollection.listIndexes().toArray();
+    console.log('Final indexes:');
+    finalIndexes.forEach(index => {
+      console.log(`- ${index.name}:`, index.key);
+    });
+    
+    res.json({ 
+      message: 'Database fixed successfully!', 
+      documentsUpdated: updateResult.modifiedCount,
+      indexesRemoved: memberCodeIndex ? 1 : 0
+    });
+    
+  } catch (error) {
+    console.error('Error fixing database:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;
